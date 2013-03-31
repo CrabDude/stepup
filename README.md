@@ -10,92 +10,65 @@ A simple control-flow library for node.JS that makes parallel execution, serial 
 
 Stepdown exports a single function:
 
-    stepdown(steps, [options], [callback])
+    stepdown([steps], options, callback)
 
-Each of the functions in the `steps` Array is called serially until that step has completed:
+Each of the functions in the `steps` Array is called serially until all steps have completed:
+```javascript
+var $$ = require('stepdown');
+function somethingAsync(callback) {
+  $$([
+    function readDir($) {
+      var req = http.request(options);
+      req.end();
+      
+      // All callbacks in a step are parallel
+      fs.readdir(__dirname, $.first());
 
-    var stepdown = require('stepdown');
+      // Event assumes first argument isn't error
+      req.on('connect', $.event())
+    },
+    function readFiles($, files, res) {
+      // Create a new group
+      var group = $.group();
+      files.forEach(function (filename) {
+        fs.readFile(__dirname + "/" + filename, group());
+      });
 
-    stepdown([function stepOne() {
-        return 'Step one is complete!';
-    }, function stepTwo(err, message) {
-        console.log(message);
+      // groups can also take a type
+      // 'ignore' waits for any results, but ignores errors
+      var group = $.group('ignore');
+      files.forEach(function (filename) {
+        // These files may not exist
+        fs.readFile(__dirname + "/" + filename + '.bkup', group());
+      });
 
-        this.next(null, 'Step two is complete!');
-    }, function finalStep(err, message) {
-        console.log(message);
-    }]);
+      // Branching is also supported
+      $.run([
+        function($) {
+          fs.readFile('one', $.first())
+        },
+        function($) {
+          // Callbacks can be called synchronously without a change in behavior
+          // Spread passes multiple arguments
+          $.spread()(null, 'arg1', 'arg2')
+          $.spread()(null, 'arg3', 'arg4')
+        }
+      ], $.spread())
+    },
+    function showAll($, fileContents, fileBackups, arg1, arg2, arg3, arg4) {
+      console.log(fileContents);
 
-The two basic methods of indicating that a step function has completed are by return value (as in `stepOne`) and by a callback function accessible as `this.next` (as in `stepTwo`). If you run this snippet, the output is what you expect:
+      // If there were no files short-circuit
+      if (!fileContents.length) return $.end(null, 'failure, no files')
 
-    Step one is complete!
-    Step two is complete!
-
-Shiny!
-
-### Next _Steps_
-
-Going beyond the [basic usage](#basic-usage-serial), Stepdown supports parallel execution in two ways: as a pre-defined set of "[results](#adding-results-pre-defined-parallel)", and as an arbitrary "[group](#grouping-results-arbitrary-parallel)" of results.
-
-## Adding Results (Pre-defined Parallel)
-
-The [basic usage](#basic-usage-serial) and it's `next` callback assume that each step has exactly one (a)synchronous result, and that each step performs only one task. The beauty of Node is in its asynchronicity, and we should take advantage of that asynchronicity to perform as much of our work as we can in parallel.
-
-To that end, enter `addResult`. Within a step, each call to `this.addResult()` generates a new callback function. Each of these functions corresponds to a new argument passed to the next step.
-
-Instead of this:
-
-    stepdown([function stepOne() {
-        // Do something asynchronous
-        setTimeout(this.next.bind(this, null, 1), 1000);
-    }, function stepTwo(err, result) {
-        // Do something else asynchronous with no dependency on the first step
-        setTimeout(this.next.bind(this, null, result, 2), 1000);
-    }, function finished(err, first, second) {
-        // This process would get really messy and take a really long time with lots of steps...
-        console.log('Results:', first, second);
-    }]);
-
-We can do this:
-
-    stepdown([function onlyStep() {
-        // Do something asynchronous
-        setTimeout(this.addResult().bind(this, null, 1), 1000);
-        // Do something else asynchronous with no dependency on the first step
-        setTimeout(this.addResult().bind(this, null, 2), 1000);
-    }, function finished(err, first, second) {
-        // This is both more maintainable and more time-efficient.
-        console.log('Results:', first, second);
-    }]);
-
-Much better, no?
-
-### Important Caveat
-
-The caveat to `addResult` is that these callback functions are allocated synchronously, requiring the developer to explicitly prescribe what results are expected ahead of time. To get around this, we can create [arbitrary groups of results](#grouping-results-arbitrary-parallel).
-
-## Grouping Results (Arbitrary Parallel)
-
-While `addResult` is sufficent and recommended for parallel operations known ahead-of-time, it's impractical-to-incapable of handling arbitrary sets of parallel operations. Enter `createGroup`. Within a step, each call to `this.createGroup()` generates a new "group" function. When this group function is called, it generates a new callback specific to that result _within the group_.
-
-The same example from before, but grouped:
-
-    stepdown([function onlyStep() {
-        var groupFn = this.createGroup();
-
-        // Do something asynchronous
-        setTimeout(groupFn().bind(this, null, 1), 1000);
-        // Do something else asynchronous with no dependency on the first step
-        setTimeout(groupFn().bind(this, null, 2), 1000);
-    }, function finished(err, group) {
-        console.log('Group Results:', group);
-    }]);
-
-Using the group function should look incredibly similar to using `addResult`.
-
-## Moving from Step/Stepup
-
-Coming (back) soon.
+      // Return (non-undefined) value to callback
+      return 'success!'
+    }
+  // All callback errors are coalesced
+  ], callback);
+}
+```
+### More comprehensive docs coming soon. Meanwhile, see [tests](https://github.com/Schoonology/stepdown/blob/master/test/stepdown.js) for comprehensive functionality.
 
 ## Attribution
 
@@ -106,8 +79,9 @@ This work stands on the shoulders of giants:
 
 ## Improvements
 
-Step and Stepup are great libraries, but Stepdown profits from their work in enabling the following improvements in the core engine:
+Stepdown improves upon step in the following ways:
 
- * If more than one Error is generated during parallel execution, the error handler will be called with an Array of all Errors. Step and Stepup only return the last Error.
- * If more than one result is generated during parallel execution, the value given to the next step will be an Array of all arguments passed. Step and Stepup only pass on the first non-Error argument.
- * If a parallel callback is fired more than once, it will be ignored. Step and Stepup break under these circumstances.
+ * Async try/catch integrated by default
+ * Error coalescing
+ * Thanks to callback generators, stepdown continues to the next step by default (step when undefined was returned)
+
